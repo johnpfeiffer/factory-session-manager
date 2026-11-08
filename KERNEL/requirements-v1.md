@@ -20,7 +20,7 @@ Build a minimal **React + TypeScript + Vite** application for managing and delet
 
 ## Out of Scope
 
-- No backend framework, database, authentication system, UI library, or state-management library
+- No backend framework, database, authentication system, state-management library
 
 Keep it small: Avoid unnecessary abstractions, custom hooks, and additional packages.
 
@@ -38,7 +38,7 @@ Relevant endpoints:
 - `GET /api/v0/sessions/{sessionId}` — retrieve session details
 - `DELETE /api/v0/sessions/{sessionId}` — delete a session
 
-Read the API documentation and verify response schemas, pagination parameters, and deletion behavior before implementation. Do not invent API fields.
+Read the API documentation for response schemas, pagination parameters, and deletion behavior before implementation. Do not invent API fields.
 
 Example session:
 
