@@ -10,6 +10,7 @@ Run `npm test` and `npm run build` from the repository root using Node.js 22.18 
 | --- | --- |
 | Cursor pagination | Mock multiple pages; verify cursor continuation, ID deduplication, and rejection of invalid or repeated cursors. |
 | Session review | Verify title/ID search, archived/active filters, and both last-update sort directions. |
+| Session inspection | Verify child response shape, explicit message-page requests, cursor continuation/deduplication, independent errors, and stale-response cancellation. |
 | Safe deletion | Verify no more than three concurrent requests, duplicate ID prevention, 204 success, and separate successful/failed/skipped outcomes. |
 | Error handling | Cover 401, 403, 404, 429, 5xx, and failed requests without automatic DELETE retries. |
 | Rate limiting | Verify pending queue interruption and `Retry-After` parsing/cooldown. |
@@ -27,6 +28,7 @@ Use synthetic API responses without a real key or live deletion. Verify:
 - Confirming removes only successful sessions and shows failures/skipped sessions clearly.
 - Repeated clicks do not launch duplicate batches; deletion controls remain disabled during operations and cooldowns.
 - Refresh, loading feedback, dates, empty results, keyboard interaction, and narrow layouts remain readable.
+- Double-click opens child sessions without fetching messages. Get messages and Load more retrieve explicit pages; empty histories and read errors remain clear. Checkbox double-click does not open details.
 
 ## Execution record
 
@@ -42,6 +44,17 @@ Validated on 2026-11-07 with Node.js 26.8.1:
 - Visual checks at 1280 px and 390 px: readable desktop table and stacked narrow rows; at 390 px the document and viewport were both 390 px wide, with no horizontal overflow. The successful browser scenario had no console warnings or errors. Temporary viewport settings were reset.
 
 No live-account deletion was performed. Kernel files were not edited by the implementation.
+
+Session inspection validated on 2026-11-08 with Node.js 26.8.1:
+
+- Red/Green: the new detail tests failed on the missing model exports, and the proxy inspection test failed because GET children/messages returned 400. After implementation, all 31 tests passed (the original 23 plus seven detail tests and one new proxy test). The original blocked-message-path assertion now checks blocked writes instead: read-only inspection was explicitly requested, while POST/DELETE and unsupported paths/queries must remain blocked.
+- Tests cover the distinct child response shape without a fabricated message count; one message page per explicit action; encoded cursors; HTTP and malformed-response errors; deduplication; repeated cursor rejection; cooldowns; duplicate-read prevention; and aborting/ignoring old reads when details close or switch.
+- Browser fixture: row double-click displayed two child sessions. Before Get messages, the request counter contained only the children GET. Get messages loaded two records, and Load more appended two more with roles and timestamps. Expandable tool input and result text were verified.
+- Keyboard activation of a session title opened the panel. A session with no children/messages showed explicit empty states. Synthetic 403 responses displayed independent child/history errors. Closing restored the list; double-clicking a checkbox did not open the panel or change the final selection. The fixture recorded no DELETE requests during inspection testing.
+- Desktop (1280 px) and narrow (390 px) layouts were visually checked. At 390 px, the viewport, document, drawer, and drawer content widths were all 390 px. The browser had no console warnings/errors in the successful scenario, and the temporary viewport override was reset.
+- TypeScript checking and the Vite build passed. The application chunk is approximately 519 kB minified; the existing size advisory remains visible.
+
+These checks used synthetic data. No real Factory session history was read and no live deletion was performed.
 
 ## Limits
 

@@ -8,6 +8,18 @@ export interface Session {
   sessionSettings?: { archivedAt?: string };
 }
 
+export type SessionSummary = Pick<Session, 'sessionId' | 'title' | 'status' | 'createdAt' | 'updatedAt'>;
+export type ChildSession = SessionSummary & { title: string };
+export interface MessageContent { type: string; [field: string]: unknown }
+export interface SessionMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: MessageContent[];
+  createdAt: number;
+  updatedAt: number;
+}
+export interface MessagePage { messages: SessionMessage[]; nextCursor: string | null }
+
 export interface SessionFilters {
   search: string;
   archive: 'archived' | 'active' | 'all';
@@ -39,7 +51,7 @@ export function isArchived(session: Session): boolean {
   return Boolean(session.sessionSettings?.archivedAt);
 }
 
-export function sessionTitle(session: Session): string {
+export function sessionTitle(session: { title?: string }): string {
   return session.title?.trim() || 'Untitled session';
 }
 
@@ -57,10 +69,9 @@ function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readSession(value: unknown): Session {
+function readSummary(value: unknown): SessionSummary {
   if (!record(value) || typeof value.sessionId !== 'string' || !value.sessionId ||
     typeof value.status !== 'string' || !['idle', 'pending', 'running'].includes(value.status) ||
-    typeof value.messageCount !== 'number' || !Number.isFinite(value.messageCount) ||
     typeof value.createdAt !== 'number' || !Number.isFinite(value.createdAt) ||
     typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt)) {
     throw new Error('Factory returned an invalid session response. Refresh to try loading again.');
@@ -70,12 +81,77 @@ function readSession(value: unknown): Session {
     sessionId: value.sessionId,
     ...(typeof value.title === 'string' ? { title: value.title } : {}),
     status: value.status as Session['status'],
-    messageCount: value.messageCount,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+  };
+}
+
+function readSession(value: unknown): Session {
+  const summary = readSummary(value);
+  if (!record(value) || typeof value.messageCount !== 'number' || !Number.isFinite(value.messageCount)) {
+    throw new Error('Factory returned an invalid session response. Refresh to try loading again.');
+  }
+  return {
+    ...summary,
+    messageCount: value.messageCount,
     ...(record(value.sessionSettings) && typeof value.sessionSettings.archivedAt === 'string'
       ? { sessionSettings: { archivedAt: value.sessionSettings.archivedAt } } : {}),
   };
+}
+
+async function requestJson(path: string, signal?: AbortSignal): Promise<unknown> {
+  signal?.throwIfAborted();
+  let response: Response;
+  try {
+    response = await fetch(path, { signal, credentials: 'omit', cache: 'no-store' });
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    throw new Error('Cannot reach the local Factory proxy. Check that the development server is running and try again.');
+  }
+  if (!response.ok) throw await responseError(response);
+  try { return await response.json(); }
+  catch { throw new Error('Factory returned an unreadable API response. Try again.'); }
+}
+
+function readNextCursor(body: Record<string, unknown>): string | null {
+  const page = body.pagination;
+  if (!record(page) || typeof page.hasMore !== 'boolean' ||
+    !(page.nextCursor === null || typeof page.nextCursor === 'string') ||
+    (page.hasMore && !page.nextCursor)) {
+    throw new Error('Factory returned an invalid pagination cursor.');
+  }
+  return page.hasMore ? page.nextCursor as string : null;
+}
+
+export async function fetchChildSessions(sessionId: string, signal?: AbortSignal): Promise<ChildSession[]> {
+  const body = await requestJson(`${basePath}/${encodeURIComponent(sessionId)}/children`, signal);
+  if (!record(body) || !Array.isArray(body.sessions)) throw new Error('Factory returned an invalid child session response.');
+  return body.sessions.map(value => {
+    const summary = readSummary(value);
+    if (!record(value) || typeof value.title !== 'string') throw new Error('Factory returned an invalid child session title.');
+    return { ...summary, title: value.title };
+  });
+}
+
+export async function fetchSessionMessages(
+  sessionId: string, cursor: string | null = null, signal?: AbortSignal,
+): Promise<MessagePage> {
+  const query = new URLSearchParams({ limit: '100' });
+  if (cursor !== null) query.set('cursor', cursor);
+  const body = await requestJson(`${basePath}/${encodeURIComponent(sessionId)}/messages?${query}`, signal);
+  if (!record(body) || !Array.isArray(body.messages)) throw new Error('Factory returned an invalid message response.');
+  const messages = body.messages.map((value): SessionMessage => {
+    if (!record(value) || typeof value.id !== 'string' || !value.id ||
+      typeof value.role !== 'string' || !['user', 'assistant', 'tool', 'system'].includes(value.role) ||
+      typeof value.createdAt !== 'number' || !Number.isFinite(value.createdAt) ||
+      typeof value.updatedAt !== 'number' || !Number.isFinite(value.updatedAt) ||
+      !Array.isArray(value.content) || !value.content.every(block => record(block) && typeof block.type === 'string')) {
+      throw new Error('Factory returned an invalid message response.');
+    }
+    return { id: value.id, role: value.role as SessionMessage['role'],
+      content: value.content as MessageContent[], createdAt: value.createdAt, updatedAt: value.updatedAt };
+  });
+  return { messages, nextCursor: readNextCursor(body) };
 }
 
 function retryTime(response: Response): number | null {
@@ -117,32 +193,20 @@ export async function fetchAllSessions(
   const cursors = new Set<string>();
   let cursor: string | null = null;
   do {
-    signal?.throwIfAborted();
     const query = new URLSearchParams({ limit: '100' });
     if (cursor !== null) query.set('cursor', cursor);
-    let response: Response;
-    try {
-      response = await fetch(`${basePath}?${query}`, { signal, credentials: 'omit', cache: 'no-store' });
-    } catch (error) {
-      if (signal?.aborted) throw error;
-      throw new Error('Cannot reach the local Factory proxy. Check that the development server is running and refresh.');
-    }
-    if (!response.ok) throw await responseError(response);
-    let body: unknown;
-    try { body = await response.json(); }
-    catch { throw new Error('Factory returned an unreadable session response. Refresh to try again.'); }
-    if (!record(body) || !Array.isArray(body.sessions) || !record(body.pagination) ||
-      typeof body.pagination.hasMore !== 'boolean' ||
-      !(body.pagination.nextCursor === null || typeof body.pagination.nextCursor === 'string')) {
+    const body = await requestJson(`${basePath}?${query}`, signal);
+    if (!record(body) || !Array.isArray(body.sessions)) {
       throw new Error('Factory returned an invalid session pagination response.');
     }
+    const nextCursor = readNextCursor(body);
     for (const value of body.sessions) {
       const session = readSession(value);
       sessions.set(session.sessionId, session);
     }
     onProgress?.(sessions.size);
-    if (!body.pagination.hasMore) break;
-    cursor = body.pagination.nextCursor;
+    if (nextCursor === null) break;
+    cursor = nextCursor;
     if (!cursor || cursors.has(cursor)) {
       throw new Error('Factory returned a missing or repeated pagination cursor. Refresh to load sessions again.');
     }

@@ -1,6 +1,6 @@
 # Derived requirements
 
-Authority: [kernel manifest](../KERNEL/AGENTS.md), [INV-001](../KERNEL/INVARIANTS.md), [MVP requirements](../KERNEL/requirements-v1.md), and [design](../KERNEL/DESIGN.md). This document interprets those inputs and does not change them.
+Authority: [kernel manifest](../KERNEL/AGENTS.md), [INV-001](../KERNEL/INVARIANTS.md), [MVP requirements](../KERNEL/requirements-v1.md), [inspection requirements](../KERNEL/requirements-v2.md), and [design](../KERNEL/DESIGN.md). This document interprets those inputs and does not modify the kernel.
 
 | Area | Required behavior |
 | --- | --- |
@@ -9,6 +9,7 @@ Authority: [kernel manifest](../KERNEL/AGENTS.md), [INV-001](../KERNEL/INVARIANT
 | Interface | React, TypeScript, Vite, native fetch, Material UI defaults, light mode, readable text, and clear loading/error feedback. |
 | Listing | Fetch all documented cursor pages, deduplicate IDs, reject invalid pagination, and show total loaded sessions. Display title, ID, status, message count, created/updated dates, and archived state. |
 | Review | Search title or ID, filter archived/active/all, default to archived, and sort by last update in either direction. |
+| Inspection | Double-click a session row or activate its title to display child sessions. Provide Get messages and explicit cursor pagination. Show independent loading, empty, and error states. Abort reads on close/switch and ignore stale results. Inspection never selects or deletes sessions. |
 | Selection | Per-session checkboxes, select all currently filtered sessions, clear selection, and visible selected count. |
 | Confirmation | Show the actual session titles and count before individual or bulk deletion. Loading and selection alone never delete. |
 | Queue | Use no more than three simultaneous DELETE requests, prevent overlapping operations and duplicate IDs, and never automatically retry a failed DELETE. |

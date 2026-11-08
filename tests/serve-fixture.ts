@@ -13,6 +13,7 @@ const sample: Session[] = [
 }));
 const deleted = new Map<string, Set<string>>();
 const deleteCalls: { scenario: string; id: string }[] = [];
+const readCalls: string[] = [];
 
 const server = await createServer({
   configFile: false,
@@ -25,7 +26,7 @@ const server = await createServer({
         const url = new URL(request.url ?? '/', 'http://127.0.0.1:5174');
         if (url.pathname === '/__test__/state') {
           response.setHeader('content-type', 'application/json');
-          response.end(JSON.stringify({ deleteCalls }));
+          response.end(JSON.stringify({ deleteCalls, readCalls }));
           return;
         }
         if (!url.pathname.startsWith('/api/')) { next(); return; }
@@ -34,6 +35,39 @@ const server = await createServer({
         deleted.set(scenario, removed);
         response.setHeader('content-type', 'application/json');
         response.setHeader('cache-control', 'no-store');
+        const inspection = /^\/api\/v0\/sessions\/(synthetic-session-\d+)\/(children|messages)$/.exec(url.pathname);
+        if (request.method === 'GET' && inspection) {
+          readCalls.push(request.url ?? '');
+          if (scenario === 'details-error') {
+            response.statusCode = 403;
+            response.end(JSON.stringify({ detail: 'Synthetic organization cannot read session history.' }));
+            return;
+          }
+          if (inspection[2] === 'children') {
+            const sessions = inspection[1] === 'synthetic-session-1' ? [
+              { sessionId: 'synthetic-child-1', title: 'Check login tests', status: 'idle', createdAt: 1794089503424, updatedAt: 1794089603424, computerId: null, computer: null },
+              { sessionId: 'synthetic-child-2', title: 'Review the login interface', status: 'running', createdAt: 1794089603424, updatedAt: 1794089703424, computerId: null, computer: null },
+            ] : [];
+            setTimeout(() => response.end(JSON.stringify({ sessions })), 200);
+          } else {
+            const more = url.searchParams.get('cursor') === 'synthetic-message-page-2';
+            const messages = inspection[1] === 'synthetic-session-2' ? [] : more ? [
+              { id: 'synthetic-message-3', role: 'tool', createdAt: 1794089703424, updatedAt: 1794089703424,
+                content: [{ type: 'tool_result', toolUseId: 'synthetic-tool-1', content: 'All 12 login tests passed.' }] },
+              { id: 'synthetic-message-4', role: 'assistant', createdAt: 1794089803424, updatedAt: 1794089803424,
+                content: [{ type: 'text', text: 'The login tests pass. The child session is reviewing the interface.' }] },
+            ] : [
+              { id: 'synthetic-message-1', role: 'user', createdAt: 1794089503424, updatedAt: 1794089503424,
+                content: [{ type: 'text', text: 'Review the login flow and run its tests.' }] },
+              { id: 'synthetic-message-2', role: 'assistant', createdAt: 1794089603424, updatedAt: 1794089603424,
+                content: [{ type: 'text', text: 'I will run the login tests while the child sessions review the changes.' },
+                  { type: 'tool_use', id: 'synthetic-tool-1', name: 'run_tests', input: { suite: 'login' } }] },
+            ];
+            const hasMore = !more && messages.length > 0;
+            setTimeout(() => response.end(JSON.stringify({ messages, pagination: { hasMore, nextCursor: hasMore ? 'synthetic-message-page-2' : null } })), 200);
+          }
+          return;
+        }
         if (request.method === 'GET' && url.pathname === '/api/v0/sessions') {
           const sessions = sample.filter(session => !removed.has(session.sessionId));
           const secondPage = url.searchParams.get('cursor') === 'synthetic-page-2';

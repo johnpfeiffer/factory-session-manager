@@ -31,13 +31,16 @@ function allowedRoute(rawUrl: string, method: string): boolean {
   const [path] = rawUrl.split('?');
   const list = path === '/api/v0/sessions';
   const detail = /^\/api\/v0\/sessions\/[A-Za-z0-9_-]+$/.test(path ?? '');
-  if ((!list && !detail) || (list ? method !== 'GET' : method !== 'GET' && method !== 'DELETE')) return false;
+  const children = /^\/api\/v0\/sessions\/[A-Za-z0-9_-]+\/children$/.test(path ?? '');
+  const messages = /^\/api\/v0\/sessions\/[A-Za-z0-9_-]+\/messages$/.test(path ?? '');
+  if (!list && !detail && !children && !messages) return false;
+  if (method !== 'GET' && !(detail && method === 'DELETE')) return false;
   const url = new URL(rawUrl, 'http://127.0.0.1');
   const seen = new Set<string>();
   for (const [name, value] of url.searchParams) {
     if (seen.has(name)) return false;
     seen.add(name);
-    if (!list || (name !== 'limit' && name !== 'cursor')) return false;
+    if ((!list && !messages) || (name !== 'limit' && name !== 'cursor')) return false;
     if (name === 'limit' && !/^(?:100|[1-9][0-9]?)$/.test(value)) return false;
     if (name === 'cursor' && (!value || value.length > 4096)) return false;
   }

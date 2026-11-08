@@ -8,6 +8,7 @@ import {
 import { SessionController } from './controllers/SessionController.ts';
 import { isArchived, sessionTitle } from './models/sessions.ts';
 import type { DeletionReport, Session } from './models/sessions.ts';
+import SessionDetailsPanel from './SessionDetailsPanel.tsx';
 
 const defaultController = new SessionController();
 const countLabel = (count: number) => `${count} session${count === 1 ? '' : 's'}`;
@@ -93,6 +94,9 @@ export default function App({ controller = defaultController }: { controller?: S
       <Button variant="outlined" disabled={busy || remainingSeconds > 0} onClick={() => void controller.load()}>Refresh</Button>
     </Stack>
     <Typography color="text.secondary" sx={{ mb: 3 }}>Review and delete your Factory sessions. Runs locally on this computer.</Typography>
+    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+      Double-click a session row or choose its title to see child sessions and messages.
+    </Typography>
 
     {state.error && <Alert severity="error" sx={{ mb: 2 }}>{state.error}</Alert>}
     {remainingSeconds > 0 && <Alert severity="warning" sx={{ mb: 2 }}>
@@ -162,14 +166,19 @@ export default function App({ controller = defaultController }: { controller?: S
           </TableRow>
         </TableHead>
         <TableBody>
-          {visible.map(session => <TableRow key={session.sessionId} selected={state.selected.has(session.sessionId)}>
+          {visible.map(session => <TableRow key={session.sessionId} selected={state.selected.has(session.sessionId)}
+            onDoubleClick={event => {
+              if (event.target instanceof Element && !event.target.closest('button, input, label, a')) void controller.openDetails(session);
+            }}>
             <TableCell className="selection-cell" padding="checkbox">
               <Checkbox checked={state.selected.has(session.sessionId)} disabled={busy}
                 slotProps={{ input: { 'aria-label': `Select ${sessionTitle(session)} (${session.sessionId})` } }}
                 onChange={() => controller.toggleSelected(session.sessionId)} />
             </TableCell>
             <TableCell className="session-cell" component="th" scope="row">
-              <Typography className="session-title">{sessionTitle(session)}</Typography>
+              <Button className="session-title" disabled={busy} aria-label={`Open details for ${sessionTitle(session)} (${session.sessionId})`}
+                sx={{ p: 0, minWidth: 0, textTransform: 'none', textAlign: 'left', justifyContent: 'flex-start', fontSize: '1rem', color: 'text.primary' }}
+                onClick={() => void controller.openDetails(session)}>{sessionTitle(session)}</Button>
               <Typography variant="body2" color="text.secondary" className="session-id">{session.sessionId}</Typography>
             </TableCell>
             <TableCell data-label="Status">
@@ -201,6 +210,8 @@ export default function App({ controller = defaultController }: { controller?: S
       {' '}This API is available only to selected organizations.
       {' '}<a href="https://docs.factory.com/api-reference/sessions" target="_blank" rel="noreferrer">API documentation</a>
     </Typography>
+
+    <SessionDetailsPanel details={state.details} controller={controller} remainingSeconds={remainingSeconds} />
 
     <Dialog open={Boolean(state.confirmation)} onClose={() => controller.closeConfirmation()} maxWidth="sm" fullWidth
       aria-labelledby="delete-dialog-title" aria-describedby="delete-dialog-description">

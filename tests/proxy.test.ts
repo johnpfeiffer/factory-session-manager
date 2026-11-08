@@ -34,7 +34,15 @@ test('proxy only forwards allowlisted session routes, methods, and pagination qu
     for (const [path, method] of [
       ['/api/v0/sessions', 'POST'],
       ['/api/v0/sessions/one', 'PATCH'],
-      ['/api/v0/sessions/one/messages', 'GET'],
+      // Session inspection adds read-only children/messages routes; writes stay blocked.
+      ['/api/v0/sessions/one/messages', 'POST'],
+      ['/api/v0/sessions/one/messages', 'DELETE'],
+      ['/api/v0/sessions/one/children', 'DELETE'],
+      ['/api/v0/sessions/one/messages?limit=101', 'GET'],
+      ['/api/v0/sessions/one/messages?cursor=a&cursor=b', 'GET'],
+      ['/api/v0/sessions/one/messages/another', 'GET'],
+      ['/api/v0/sessions/one/children?cursor=a', 'GET'],
+      ['/api/v0/sessions/one/children?includeUsage=true', 'GET'],
       ['/api/v0/other', 'GET'],
       ['/api/v0/sessions/one%2Ftwo', 'DELETE'],
       ['/api/v0/sessions?limit=101', 'GET'],
@@ -46,6 +54,21 @@ test('proxy only forwards allowlisted session routes, methods, and pagination qu
     }
     assert.equal(forwarded, 0);
   });
+});
+
+test('proxy permits only the two inspection GET routes and message pagination', async () => {
+  const forwarded: string[] = [];
+  await withProxy(async (input, options) => {
+    forwarded.push(String(input));
+    assert.equal(options?.method, 'GET');
+    assert.equal(new Headers(options?.headers).get('authorization'), `Bearer ${secret}`);
+    return Response.json({});
+  }, async (base) => {
+    for (const path of ['/api/v0/sessions/one/children', '/api/v0/sessions/one/messages?limit=100&cursor=next']) {
+      assert.equal((await fetch(base + path)).status, 200);
+    }
+  });
+  assert.deepEqual(forwarded, ['https://api.factory.ai/api/v0/sessions/one/children', 'https://api.factory.ai/api/v0/sessions/one/messages?limit=100&cursor=next']);
 });
 
 test('proxy injects its environment key and excludes browser credentials', async () => {

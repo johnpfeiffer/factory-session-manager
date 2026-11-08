@@ -29,6 +29,12 @@ The UI can start without a key. API requests then return a helpful configuration
 
 This proxy is for trusted local development only. It binds to `127.0.0.1`; do not expose it through a tunnel, bind it to a public interface, or deploy it as a production service. The static build does not include an API server, and Vite preview is not a supported way to use the session manager.
 
+## Inspecting sessions
+
+Double-click a session row, or choose its title with the mouse or keyboard, to open the details panel on the right. Its child sessions load automatically, with their titles, IDs, status, and creation/update times. Closing the panel cancels pending reads and clears its message history from application state.
+
+Choose **Get messages** to load the first page of the selected session's history. **Load more messages** fetches the next page; **Refresh messages** starts again from the first page. Messages show their role, timestamp, text, and expandable tool calls/results. Images, binary documents, and reasoning blocks appear as labeled placeholders. Text documents display their text. Child-session and message errors appear separately, and rate-limit delays apply to these reads as well as deletion. Inspection does not select or delete sessions.
+
 ## Deleting sessions
 
 Review the archived filter, search results, and selected count. “Select all filtered” adds the currently visible sessions to the selection. Clearing the selection removes all selected IDs. Deleting a session or a selection opens a confirmation dialog listing the affected titles and count. Selecting or loading sessions never initiates deletion.
@@ -53,5 +59,7 @@ npm run test:ui
 ```
 
 Open [http://127.0.0.1:5174](http://127.0.0.1:5174). This separate server uses seven synthetic sessions and two cursor pages; it never loads the real proxy. The default scenario gives mixed deletion results (204, 404, and 429) and stops the remaining queue. Use `/?scenario=success` for successful deletions or `/?scenario=ratezero` for `Retry-After: 0`. Successful deletions remain removed until the fixture server restarts. Stop it with Ctrl+C. The normal development server can also be started without a key to check the configuration error. Live-account deletion is excluded from all validation.
+
+For inspection checks, open **Login setup** to see two child sessions and two pages of messages, including tool calls and results. **Documentation follow-up** has no children or messages. Use `/?scenario=details-error` to check organization-access errors in both parts of the panel.
 
 See [architecture.md](architecture.md), the derived [requirements](SPEC/requirements.md), and the [validation checklist](VALIDATION/checks.md). The human-authored [kernel](KERNEL/AGENTS.md) remains the authority for this project.

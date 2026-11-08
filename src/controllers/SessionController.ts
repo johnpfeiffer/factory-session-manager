@@ -1,5 +1,16 @@
-import { ApiError, deleteSessions, fetchAllSessions, filterSessions } from '../models/sessions.ts';
-import type { DeletionReport, Session, SessionFilters } from '../models/sessions.ts';
+import { ApiError, deleteSessions, fetchAllSessions, fetchChildSessions, fetchSessionMessages, filterSessions } from '../models/sessions.ts';
+import type { ChildSession, DeletionReport, Session, SessionFilters, SessionMessage, SessionSummary } from '../models/sessions.ts';
+
+export interface SessionDetailsState {
+  session: SessionSummary;
+  children: ChildSession[] | null;
+  childrenLoading: boolean;
+  childrenError: string | null;
+  messages: SessionMessage[] | null;
+  messagesLoading: boolean;
+  messagesError: string | null;
+  nextCursor: string | null;
+}
 
 interface State {
   sessions: Session[];
@@ -15,11 +26,14 @@ interface State {
   completed: number;
   total: number;
   cooldownUntil: number | null;
+  details: SessionDetailsState | null;
 }
 
 interface SessionApi {
   fetchAllSessions: typeof fetchAllSessions;
   deleteSessions: typeof deleteSessions;
+  fetchChildSessions: typeof fetchChildSessions;
+  fetchSessionMessages: typeof fetchSessionMessages;
 }
 
 // Owns asynchronous operations and selection; the React view only renders and dispatches events.
@@ -28,15 +42,18 @@ export class SessionController {
     sessions: [], filters: { search: '', archive: 'archived', sort: 'newest' },
     selected: new Set(), loading: false, loaded: false, loadedCount: 0,
     deleting: false, error: null, confirmation: null, report: null,
-    completed: 0, total: 0, cooldownUntil: null,
+    completed: 0, total: 0, cooldownUntil: null, details: null,
   };
   private listeners = new Set<() => void>();
   private abortController: AbortController | null = null;
+  private childrenAbort: AbortController | null = null;
+  private messagesAbort: AbortController | null = null;
+  private messageCursors = new Set<string>();
   private api: SessionApi;
   private now: () => number;
 
-  constructor(api: SessionApi = { fetchAllSessions, deleteSessions }, now: () => number = Date.now) {
-    this.api = api;
+  constructor(api: Partial<SessionApi> = {}, now: () => number = Date.now) {
+    this.api = { fetchAllSessions, deleteSessions, fetchChildSessions, fetchSessionMessages, ...api };
     this.now = now;
   }
 
@@ -77,7 +94,77 @@ export class SessionController {
     }
   }
 
-  cancelLoad = () => { this.abortController?.abort(); };
+  cancelLoad = () => { this.abortController?.abort(); this.closeDetails(); };
+
+  private patchDetails(patch: Partial<SessionDetailsState>) {
+    if (this.state.details) this.update({ details: { ...this.state.details, ...patch } });
+  }
+  private detailError(field: 'childrenError' | 'messagesError', error: unknown) {
+    this.patchDetails({ [field]: error instanceof Error ? error.message : 'Unable to load session information.' });
+    if (error instanceof ApiError && error.retryAt !== null) {
+      this.update({ cooldownUntil: Math.max(this.state.cooldownUntil ?? 0, error.retryAt) });
+    }
+  }
+  closeDetails = () => {
+    this.childrenAbort?.abort();
+    this.messagesAbort?.abort();
+    this.childrenAbort = null;
+    this.messagesAbort = null;
+    this.messageCursors.clear();
+    if (this.state.details) this.update({ details: null });
+  };
+  async openDetails(session: SessionSummary): Promise<void> {
+    if (this.busy || this.state.confirmation || this.state.details?.session.sessionId === session.sessionId) return;
+    this.closeDetails();
+    this.update({ details: { session, children: null, childrenLoading: false, childrenError: null,
+      messages: null, messagesLoading: false, messagesError: null, nextCursor: null } });
+    await this.loadChildren();
+  }
+  async loadChildren(): Promise<void> {
+    const details = this.state.details;
+    if (!details || this.busy || this.coolingDown || details.childrenLoading) return;
+    const operation = new AbortController();
+    this.childrenAbort = operation;
+    this.patchDetails({ childrenLoading: true, childrenError: null });
+    try {
+      const children = await this.api.fetchChildSessions(details.session.sessionId, operation.signal);
+      if (!operation.signal.aborted) this.patchDetails({ children });
+    } catch (error) {
+      if (!operation.signal.aborted) this.detailError('childrenError', error);
+    } finally {
+      if (this.childrenAbort === operation) {
+        this.childrenAbort = null;
+        this.patchDetails({ childrenLoading: false });
+      }
+    }
+  }
+  async loadMessages(more = false): Promise<void> {
+    const details = this.state.details;
+    if (!details || this.busy || this.coolingDown || details.messagesLoading || (more && !details.nextCursor)) return;
+    const cursor = more ? details.nextCursor : null;
+    const operation = new AbortController();
+    this.messagesAbort = operation;
+    this.patchDetails({ messagesLoading: true, messagesError: null });
+    try {
+      const page = await this.api.fetchSessionMessages(details.session.sessionId, cursor, operation.signal);
+      if (operation.signal.aborted) return;
+      if (page.nextCursor && (page.nextCursor === cursor || (more && this.messageCursors.has(page.nextCursor)))) {
+        throw new Error('Factory returned a repeated message cursor. Refresh messages to start again.');
+      }
+      if (!more) this.messageCursors.clear();
+      if (cursor) this.messageCursors.add(cursor);
+      const messages = new Map((more ? details.messages ?? [] : []).map(message => [message.id, message]));
+      page.messages.forEach(message => messages.set(message.id, message));
+      this.patchDetails({ messages: [...messages.values()], nextCursor: page.nextCursor });
+    } catch (error) {
+      if (!operation.signal.aborted) this.detailError('messagesError', error);
+    } finally {
+      if (this.messagesAbort === operation) {
+        this.messagesAbort = null;
+        this.patchDetails({ messagesLoading: false });
+      }
+    }
+  }
   setFilters(filters: Partial<SessionFilters>) { this.update({ filters: { ...this.state.filters, ...filters } }); }
   toggleSelected(id: string) {
     if (this.busy || this.state.confirmation || !this.state.sessions.some(session => session.sessionId === id)) return;
@@ -110,6 +197,7 @@ export class SessionController {
     try {
       const report = await this.api.deleteSessions(sessions, completed => this.update({ completed }));
       const deleted = new Set(report.succeeded.map(session => session.sessionId));
+      if (this.state.details && deleted.has(this.state.details.session.sessionId)) this.closeDetails();
       this.update({ report, sessions: this.state.sessions.filter(session => !deleted.has(session.sessionId)),
         selected: new Set([...this.state.selected].filter(id => !deleted.has(id))),
         cooldownUntil: Math.max(this.state.cooldownUntil ?? 0, report.retryAt ?? 0) || null });
